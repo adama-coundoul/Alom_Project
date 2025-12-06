@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ProjectModuleManager">
+    <modules>
+      <module fileurl="file://$PROJECT_DIR$/.idea/ALOM_PROJECT_THREE.iml" filepath="$PROJECT_DIR$/.idea/ALOM_PROJECT_THREE.iml" />
+      <module fileurl="file://$PROJECT_DIR$/private-service/private-service.iml" filepath="$PROJECT_DIR$/private-service/private-service.iml" />
+    </modules>
+  </component>
+</project>
