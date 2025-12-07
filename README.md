@@ -28,9 +28,9 @@ Ce projet implémente une architecture **microservices distribuée** permettant 
    - génère un token UUID,  
    - synchronise ce token avec PrivateService, ChannelService et NotificationService.  
 3. Le client reçoit :  
-```json
+```
 { "token": "<uuid>", "nickname": "<nickname>" }
-
+```
 ---
 
 ### Message Privé
@@ -40,7 +40,7 @@ Ce projet implémente une architecture **microservices distribuée** permettant 
 4. Format :  
 ```
 [Msg de <expéditeur>] <contenu>
-
+```
 
 ---
 
@@ -89,10 +89,25 @@ POST
 http://localhost:8080/user-service/api/users/register
 ```
 
+```
+{"nickname":"alice","password":"pwd"} 
+```
+```
+{"nickname":"alice","password":"pwd"} 
+```
+
 ###  Login + Synchronisation des tokens  
 POST  
 ```
 http://localhost:8080/user-service/api/users/login
+```
+
+```
+{"nickname":"alice","password":"pwd"} 
+
+```
+```
+{"nickname":"bob","password":"pwd"} 
 ```
 
 ###  Envoi de message privé  
@@ -101,10 +116,25 @@ POST
 http://localhost:8080/router-service/api/router/private/send
 ```
 
+```
+{
+  "token": "tokenAlice",
+  "to": "bob",
+  "content": "salut bob"
+}
+```
+
 ###  Envoi de message public  
 POST  
 ```
 http://localhost:8080/router-service/api/router/chat/send
+```
+
+```
+{
+  "to": "all",
+  "message": "hello tout le monde"
+}
 ```
 
 ###  Rejoindre un channel  
@@ -113,14 +143,26 @@ POST
 http://localhost:8080/router-service/api/router/channel/join
 ```
 
+```
+{"token":"tokenAlice","channel":"sport"}
+```
+
 ###  Envoi d’un message au channel  
 POST  
 ```
 http://localhost:8080/router-service/api/router/channel/send
 ```
 
+```
+{"token":"tokenAlice","channel":"sport","content":"match ce soir ?"}
+```
+
 ###  Quitter un channel  
 POST  
 ```
 http://localhost:8080/router-service/api/router/channel/leave
+```
+
+```
+{"token":"tokenAlice","channel":"sport"}
 ```
