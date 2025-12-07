@@ -1,14 +1,8 @@
 package alom.privatemsg;
-import jakarta.servlet.ServletException;
-import jakarta.servlet.annotation.WebServlet;
-import jakarta.servlet.http.HttpServlet;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
 
-import java.io.IOException;
-import java.io.PrintWriter;
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
 
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -16,79 +10,65 @@ import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.serialization.LongSerializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 
-@WebServlet("/api/private/*")
-public class PrivateService extends HttpServlet {
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+
+@Path("/") // avec le mapping /api/private/* -> /api/private/sync/token, /api/private/send
+@Consumes(MediaType.APPLICATION_JSON)
+@Produces(MediaType.APPLICATION_JSON)
+public class PrivateService {
 
     // token -> nickname
     private static final Map<String, String> USERS_TOKENS = new ConcurrentHashMap<>();
     private static KafkaProducer<Long, String> producer;
 
-    @Override
-    public void init() throws ServletException {
-        super.init();
+    static {
         initKafkaProducer();
-        System.out.println("PrivateService servlet initialisée (Kafka prêt)");
+        System.out.println("PrivateService Jersey initialisé (Kafka prêt)");
     }
 
-    @Override
-    public void destroy() {
-        super.destroy();
-        if (producer != null) {
-            producer.close();
-        }
-        System.out.println("PrivateService servlet détruite (Kafka fermé)");
+    // ========= /api/private/sync/token =========
+
+    @GET
+    @Path("/ping")
+    public String ping() {
+        System.out.println("PING PRIVATE appelé");
+        return "OK PRIVATE";
     }
-
-    @Override
-    protected void doPost(HttpServletRequest req, HttpServletResponse resp)
-            throws ServletException, IOException {
-
-        String path = req.getPathInfo(); // ex: /send ou /sync/token
-        String body = new String(req.getInputStream().readAllBytes());
-        resp.setContentType("application/json");
-
-        if ("/sync/token".equals(path)) {
-            handleTokenSync(body, resp);
-        } else if ("/send".equals(path)) {
-            handleSendPrivate(body, resp);
-        } else {
-            sendResponse(resp, 404, "{\"error\":\"unknown path\"}");
-        }
-    }
-
-    // ========== /api/private/sync/token ==========
-
-    private void handleTokenSync(String body, HttpServletResponse resp) throws IOException {
-        Map<String, String> map = parseJson(body);
-
-        String token = map.get("token");
-        String nickname = map.get("nickname");
+    
+    @POST
+    @Path("/sync/token")
+    public Response syncToken(Map<String, String> body) {
+        String token = body.get("token");
+        String nickname = body.get("nickname");
 
         if (token != null && nickname != null) {
             USERS_TOKENS.put(token, nickname);
         }
 
-        sendResponse(resp, 200, "{\"status\":\"token synced\"}");
+        return Response.ok(Map.of("status", "token synced")).build();
     }
 
-    // ========== /api/private/send ==========
+    // ========= /api/private/send =========
 
-    private void handleSendPrivate(String body, HttpServletResponse resp) throws IOException {
-        Map<String, String> json = parseJson(body);
-
+    @POST
+    @Path("/send")
+    public Response sendPrivate(Map<String, String> json) {
         String token = json.get("token");
         String content = json.get("content");
         String toNickname = json.get("to");
 
         if (token == null || content == null || toNickname == null) {
-            sendResponse(resp, 400, "{\"error\":\"missing fields\"}");
-            return;
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(Map.of("error", "missing fields"))
+                    .build();
         }
 
         String fromNickname = USERS_TOKENS.get(token);
         if (fromNickname == null) {
-            sendResponse(resp, 401, "{\"error\":\"invalid token\"}");
-            return;
+            return Response.status(Response.Status.UNAUTHORIZED)
+                    .entity(Map.of("error", "invalid token"))
+                    .build();
         }
 
         String finalMessage = "[Msg de " + fromNickname + "] " + content;
@@ -96,23 +76,24 @@ public class PrivateService extends HttpServlet {
         boolean sent = forwardToNotificationService(finalMessage, toNickname);
 
         if (!sent) {
-            sendResponse(resp, 500, "{\"error\":\"delivery failed\"}");
-            return;
+            return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
+                    .entity(Map.of("error", "delivery failed"))
+                    .build();
         }
 
-        sendResponse(resp, 200, "{\"status\":\"sent\"}");
+        return Response.ok(Map.of("status", "sent")).build();
     }
 
-    // ========== Kafka vers NotificationService ==========
+    // ========= Kafka vers NotificationService =========
 
-    private boolean forwardToNotificationService(String message, String toNickname) {
+    private static boolean forwardToNotificationService(String message, String toNickname) {
         try {
             String json = String.format(
                     "{\"message\":\"%s\",\"to\":\"%s\"}",
                     message, toNickname
             );
 
-            String topicName = "user." + toNickname;   // ex: user.alice, user.bob
+            String topicName = "user." + toNickname;   // ex: user.alice
 
             ProducerRecord<Long, String> record =
                     new ProducerRecord<>(topicName, System.currentTimeMillis(), json);
@@ -125,30 +106,7 @@ public class PrivateService extends HttpServlet {
         }
     }
 
-    // ========== Utils ==========
-
-    private Map<String, String> parseJson(String json) {
-        Map<String, String> map = new HashMap<>();
-        if (json == null) return map;
-        json = json.trim().replaceAll("[{}\"]", "");
-        if (json.isEmpty()) return map;
-        for (String part : json.split(",")) {
-            String[] kv = part.split(":", 2);
-            if (kv.length == 2)
-                map.put(kv[0].trim(), kv[1].trim());
-        }
-        return map;
-    }
-
-    private void sendResponse(HttpServletResponse resp, int status, String text) throws IOException {
-        resp.setStatus(status);
-        try (PrintWriter out = resp.getWriter()) {
-            out.write(text);
-            out.flush();
-        }
-    }
-
-    private void initKafkaProducer() {
+    private static void initKafkaProducer() {
         Properties props = new Properties();
         props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
         props.put(ProducerConfig.CLIENT_ID_CONFIG, "private-service");

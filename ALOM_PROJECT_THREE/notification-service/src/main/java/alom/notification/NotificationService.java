@@ -7,42 +7,73 @@ import java.util.concurrent.*;
 import java.util.logging.Logger;
 
 import org.apache.kafka.clients.consumer.*;
+import org.apache.kafka.common.errors.WakeupException;
 import org.apache.kafka.common.serialization.LongDeserializer;
 import org.apache.kafka.common.serialization.StringDeserializer;
 
 public class NotificationService {
     private static final Logger logger = Logger.getLogger(NotificationService.class.getName());
 
-    // token -> nickname
     static final Map<String, String> TOKENS = new ConcurrentHashMap<>();
-    // nickname -> PrintWriter TCP
     static final Map<String, PrintWriter> CONNECTED_CLIENTS = new ConcurrentHashMap<>();
-    // nickname -> messages en attente
     static final Map<String, List<String>> MESSAGE_QUEUE = new ConcurrentHashMap<>();
 
     private static final int TCP_PORT = 9090;
 
     private static ExecutorService threadPool = Executors.newCachedThreadPool();
 
+    // nouvelles références :
+    private static volatile boolean running = true;
+    private static ServerSocket serverSocket;
+    private static final List<KafkaConsumer<Long, String>> CONSUMERS = new CopyOnWriteArrayList<>();
+
     public static void start() {
+        running = true;
         startTcpServer();
     }
 
     public static void stop() {
-        // TODO : fermer proprement les sockets / consumers si besoin
+        running = false;
+        // fermer le serveur TCP pour casser accept()
+        try {
+            if (serverSocket != null && !serverSocket.isClosed()) {
+                serverSocket.close();
+            }
+        } catch (IOException e) {
+            logger.warning("Erreur à la fermeture du ServerSocket: " + e.getMessage());
+        }
+
+        // fermer les consumers Kafka
+        for (KafkaConsumer<Long, String> c : CONSUMERS) {
+            try {
+                c.wakeup(); // ou c.close();
+            } catch (Exception ignored) {}
+        }
+
+        // arrêter le pool de threads
+        threadPool.shutdownNow();
+        logger.info("NotificationService arrêté proprement.");
     }
 
-    // ========== TCP : clients + consumers Kafka par user ==========
-
+    // ========== TCP : serveur + clients ==========
     public static void startTcpServer() {
         Thread tcpThread = new Thread(() -> {
             try {
-                ServerSocket serverSocket = new ServerSocket(TCP_PORT);
+                serverSocket = new ServerSocket(TCP_PORT);
                 logger.info("NotificationService TCP démarré sur port " + TCP_PORT);
 
-                while (true) {
-                    Socket socket = serverSocket.accept();
-                    threadPool.submit(() -> handleClient(socket));
+                while (running) {
+                    try {
+                        Socket socket = serverSocket.accept();
+                        threadPool.submit(() -> handleClient(socket));
+                    } catch (SocketException se) {
+                        // arrive quand on ferme serverSocket dans stop()
+                        if (!running) {
+                            logger.info("ServerSocket fermé, arrêt de la boucle accept().");
+                        } else {
+                            logger.severe("Erreur accept(): " + se.getMessage());
+                        }
+                    }
                 }
             } catch (IOException e) {
                 logger.severe("Erreur startTcpServer: " + e.getMessage());
@@ -76,10 +107,8 @@ public class NotificationService {
 
             CONNECTED_CLIENTS.put(nickname, out);
 
-            // Consumer Kafka pour ce user : topic user.<nickname>
             startUserTopicConsumer(nickname, out);
 
-            // Messages déjà en attente
             if (MESSAGE_QUEUE.containsKey(nickname)) {
                 for (String msg : MESSAGE_QUEUE.get(nickname)) {
                     out.println(msg);
@@ -89,7 +118,7 @@ public class NotificationService {
             }
 
             String line;
-            while ((line = in.readLine()) != null) {
+            while (running && (line = in.readLine()) != null) {
                 if ("quit".equalsIgnoreCase(line.trim())) {
                     out.println("Au revoir !");
                     break;
@@ -104,7 +133,7 @@ public class NotificationService {
         }
     }
 
-    // Un consumer Kafka par user connecté, sur topic user.<nickname>
+    // ========== Kafka consumer par user ==========
     private static void startUserTopicConsumer(String nickname, PrintWriter out) {
         String topicName = "user." + nickname;
 
@@ -118,21 +147,30 @@ public class NotificationService {
 
         KafkaConsumer<Long, String> userConsumer = new KafkaConsumer<>(props);
         userConsumer.subscribe(Collections.singletonList(topicName));
+        CONSUMERS.add(userConsumer);
 
         Thread t = new Thread(() -> {
             logger.info("Kafka consumer started for user " + nickname + " on topic " + topicName);
-            while (true) {
-                ConsumerRecords<Long, String> records =
-                        userConsumer.poll(java.time.Duration.ofMillis(1000));
-                for (ConsumerRecord<Long, String> record : records) {
-                    String body = record.value(); // {"message":"...","to":"nickname"}
-                    logger.info("Message Kafka pour " + nickname + " : " + body);
-                    Map<String, String> map = parseJson(body);
-                    String finalMessage = map.get("message");
-                    if (finalMessage != null) {
-                        out.println(finalMessage);
+            try {
+                while (running) {
+                    ConsumerRecords<Long, String> records =
+                            userConsumer.poll(java.time.Duration.ofMillis(1000));
+                    for (ConsumerRecord<Long, String> record : records) {
+                        String body = record.value();
+                        logger.info("Message Kafka pour " + nickname + " : " + body);
+                        Map<String, String> map = parseJson(body);
+                        String finalMessage = map.get("message");
+                        if (finalMessage != null) {
+                            out.println(finalMessage);
+                        }
                     }
                 }
+            } catch (WakeupException we) {
+                // normal lors de stop()
+                logger.info("Consumer " + nickname + " réveillé pour arrêt.");
+            } finally {
+                userConsumer.close();
+                logger.info("Consumer fermé pour " + nickname);
             }
         }, "user-topic-" + nickname);
 
@@ -141,7 +179,6 @@ public class NotificationService {
     }
 
     // ========== Utils ==========
-
     static Map<String, String> parseJson(String json) {
         Map<String, String> map = new HashMap<>();
         if (json == null) return map;

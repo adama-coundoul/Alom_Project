@@ -1,95 +1,94 @@
 package alom.router;
 
-// Importations Jakarta EE (pour Tomcat 10+)
-import jakarta.servlet.ServletException;
-import jakarta.servlet.annotation.WebServlet;
-import jakarta.servlet.http.HttpServlet;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
 
-import java.io.*;
-import java.net.*;
-import java.util.concurrent.*;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 
-/**
- * Servlet agissant comme un proxy/routeur pour les différents microservices.
- */
-@WebServlet("/api/router/*")
-public class RouterService extends HttpServlet { 
-    
-    // ----------------------------------------------------------------------
-    // --- Point d'Entrée HTTP (doPost) ---
-    // ----------------------------------------------------------------------
+@Path("/") // combiné avec /api/router/* du web.xml
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
+public class RouterService {
 
-    @Override
-    protected void doPost(HttpServletRequest request, HttpServletResponse response) 
-            throws ServletException, IOException {
-        
-        String pathInfo = request.getPathInfo();
-        
-        // Lire le corps de la requête
-        String body = new String(request.getInputStream().readAllBytes());
-        response.setContentType("application/json");
-
-        if (pathInfo == null) {
-            sendJSON(response, HttpServletResponse.SC_NOT_FOUND, "{\"error\":\"Endpoint not found\"}");
-            return;
-        }
-
-        boolean ok = false;
-        String targetUrl = null;
-        String successMessage = null;
-
-        // 🎯 CORRECTION DES PORTS ET DES CONTEXTES WEB
-        // Nous utilisons http://localhost:8080/NOM_DU_SERVICE/api/...
-        
-        if (pathInfo.startsWith("/chat/send")) {
-            targetUrl = "http://localhost:8080/notification-service/api/notification/messages";
-            successMessage = "Message forwarded";
-
-        } else if (pathInfo.startsWith("/private/send")) {
-            targetUrl = "http://localhost:8080/private-service/api/private/send";
-            successMessage = "Private message forwarded";
-
-        } else if (pathInfo.startsWith("/channel/join")) {
-            targetUrl = "http://localhost:8080/channel-service/api/channel/join";
-            successMessage = "joined";
-
-        } else if (pathInfo.startsWith("/channel/leave")) {
-            targetUrl = "http://localhost:8080/channel-service/api/channel/leave";
-            successMessage = "left";
-
-        } else if (pathInfo.startsWith("/channel/send")) {
-            targetUrl = "http://localhost:8080/channel-service/api/channel/send";
-            successMessage = "Channel message forwarded";
-        
-
-        } else {
-            sendJSON(response, HttpServletResponse.SC_NOT_FOUND, "{\"error\":\"Route not defined\"}");
-            return;
-        }
-
-        // Exécuter le forward
-        ok = forwardPOST(targetUrl, body);
-
+    @POST
+    @Path("/chat/send")
+    public Response chatSend(String body) {
+        String targetUrl = "http://localhost:8080/notification-service/api/notification/messages";
+        boolean ok = forwardPOST(targetUrl, body);
         if (ok) {
-            sendJSON(response, HttpServletResponse.SC_OK, "{\"status\":\"" + successMessage + "\"}");
+            return Response.ok("{\"status\":\"Message forwarded\"}").build();
         } else {
-            // Utiliser 502 Bad Gateway si le service cible est injoignable
-            sendJSON(response, HttpServletResponse.SC_BAD_GATEWAY, "{\"error\":\"Forwarding failed to " + targetUrl + "\"}"); 
+            return Response.status(Response.Status.BAD_GATEWAY)
+                    .entity("{\"error\":\"Forwarding failed to " + targetUrl + "\"}")
+                    .build();
         }
     }
-    
-    // ----------------------------------------------------------------------
-    // --- Utilitaires (Inchangs) ---
-    // ----------------------------------------------------------------------
 
-    /** Forward la requete POST vers l'URL cible et retourne TRUE si 2xx. */
+    @POST
+    @Path("/send")
+    public Response privateSend(String body) {
+        String targetUrl = "http://localhost:8080/private-service/api/private/send";
+        boolean ok = forwardPOST(targetUrl, body);
+        if (ok) {
+            return Response.ok("{\"status\":\"Private message forwarded\"}").build();
+        } else {
+            return Response.status(Response.Status.BAD_GATEWAY)
+                    .entity("{\"error\":\"Forwarding failed to " + targetUrl + "\"}")
+                    .build();
+        }
+    }
+
+    @POST
+    @Path("/channel/join")
+    public Response channelJoin(String body) {
+        String targetUrl = "http://localhost:8080/channel-service/api/channel/join";
+        boolean ok = forwardPOST(targetUrl, body);
+        if (ok) {
+            return Response.ok("{\"status\":\"joined\"}").build();
+        } else {
+            return Response.status(Response.Status.BAD_GATEWAY)
+                    .entity("{\"error\":\"Forwarding failed to " + targetUrl + "\"}")
+                    .build();
+        }
+    }
+
+    @POST
+    @Path("/channel/leave")
+    public Response channelLeave(String body) {
+        String targetUrl = "http://localhost:8080/channel-service/api/channel/leave";
+        boolean ok = forwardPOST(targetUrl, body);
+        if (ok) {
+            return Response.ok("{\"status\":\"left\"}").build();
+        } else {
+            return Response.status(Response.Status.BAD_GATEWAY)
+                    .entity("{\"error\":\"Forwarding failed to " + targetUrl + "\"}")
+                    .build();
+        }
+    }
+
+    @POST
+    @Path("/channel/send")
+    public Response channelSend(String body) {
+        String targetUrl = "http://localhost:8080/channel-service/api/channel/send";
+        boolean ok = forwardPOST(targetUrl, body);
+        if (ok) {
+            return Response.ok("{\"status\":\"Channel message forwarded\"}").build();
+        } else {
+            return Response.status(Response.Status.BAD_GATEWAY)
+                    .entity("{\"error\":\"Forwarding failed to " + targetUrl + "\"}")
+                    .build();
+        }
+    }
+
+    // --- utilitaire HTTP identique à avant ---
+
     private boolean forwardPOST(String targetUrl, String body) {
         try {
             URL url = new URL(targetUrl);
-            
-            // ... (reste du code forwardPOST)
             HttpURLConnection con = (HttpURLConnection) url.openConnection();
             con.setRequestMethod("POST");
             con.setDoOutput(true);
@@ -101,22 +100,12 @@ public class RouterService extends HttpServlet {
 
             int code = con.getResponseCode();
             con.disconnect();
-
             return code >= 200 && code < 300;
 
-        } catch (Exception e) {
+        } catch (IOException e) {
             System.err.println("Erreur de forwarding vers " + targetUrl + ": " + e.getMessage());
             e.printStackTrace();
             return false;
-        }
-    }
-
-    /** Envoie une rponse JSON  l'utilisateur. */
-    private void sendJSON(HttpServletResponse response, int status, String json) throws IOException {
-        response.setStatus(status);
-        try (PrintWriter out = response.getWriter()) {
-            out.write(json);
-            out.flush();
         }
     }
 }
