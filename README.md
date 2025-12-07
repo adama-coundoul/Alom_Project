@@ -63,7 +63,7 @@ localhost:9090
    - valide le token,  
    - récupère le nickname,  
    - s’abonne au topic Kafka `user.<nickname>`.  
-4. Chaque message reçu est envoyé instantanément via la connexion TCP. fileciteturn0file0
+4. Chaque message reçu est envoyé instantanément via la connexion TCP.
 
 ---
 
