@@ -122,7 +122,7 @@ http://localhost:8080/user-service/api/users/register
 {"nickname":"alice","password":"pwd"} 
 ```
 ```
-{"nickname":"alice","password":"pwd"} 
+{"nickname":"bob","password":"pwd"} 
 ```
 
 ###  Login + Synchronisation des tokens  
