@@ -1,88 +1,117 @@
-#  Projet ALOM Server de Chat
+#  Projet ALOM — Serveur de Chat Distribué
 
-## Architecture du Projet
 Ce projet implémente une architecture **microservices distribuée** permettant :
 
-- Authentification des utilisateurs  
+- **Jersey (REST)** pour les communications client → serveur  
+- **Kafka** pour transporter les messages entre microservices  
+- **Socket TCP** pour envoyer les messages en temps réel aux clients  
+- **Tomcat** comme serveur de déploiement  
+
+---
+
+# Architecture Générale
+
+Le projet est composé de 5 microservices :
+
+### **1. UserService**
+- Création d’utilisateur  
+- Login + génération de token  
+- Synchronisation du token vers :  
+  - NotificationService  
+  - PrivateService  
+  - ChannelService  
+
+### **2. PrivateService**
 - Envoi de messages privés  
-- Envoi de messages dans des channels (groupes)  
-- Réception des messages en temps réel via **TCP + Kafka**
+- Publie les messages dans Kafka (`user.<nickname>`)  
+
+### **3. ChannelService**
+- Rejoindre / quitter un channel  
+- Envoyer des messages à tous les membres du channel  
+- Publie chaque message dans Kafka pour chaque membre  
+
+### **4. NotificationService**
+- Service “retour”  
+- Les clients s’y connectent en TCP  
+- Authentifie via token  
+- Pour chaque utilisateur :  
+  - écoute Kafka  
+  - pousse les messages directement via la socket  
+
+### **5. RouterService**
+- Point d’entrée unique HTTP  
+- Redirige vers les bons microservices
 
 ---
 
-## Microservices utilisés
-- **UserService** : Authentifie les utilisateurs, génère les tokens et les synchronise avec les autres services.  
-- **PrivateService** : Gère les messages privés.  
-- **ChannelService** : Gère les messages de channel et les interactions Kafka.  
-- **RouterService** : Point d’entrée HTTP unique (reverse proxy).  
-- **NotificationService** : Maintient une connexion TCP avec chaque client et transmet en temps réel les messages provenant de Kafka.
+#  Fonctionnement Global
 
----
+##  1. Inscription & Authentification
 
-##  Flux Fonctionnels
+### **POST /register**
+Crée un utilisateur.
 
-### Authentification
-1. Le client envoie son **nickname** et **password** sur `/login`.  
-2. Le RouterService transmet la requête au UserService, qui :  
-   - vérifie les identifiants,  
-   - génère un token UUID,  
-   - synchronise ce token avec PrivateService, ChannelService et NotificationService.  
-3. Le client reçoit :  
+### **POST /login**
+- Vérifie le mot de passe  
+- Génère un token UUID  
+- Synchronise le token dans : NotificationService, PrivateService, ChannelService  
+
+Réponse :
+```json
+{
+  "token": "xxxx-xxxx-xxxx",
+  "nickname": "alice"
+}
 ```
-{ "token": "<uuid>", "nickname": "<nickname>" }
+
+---
+
+##  2. Envoi d’un Message Privé
+
+1. Client → `/private/send`  
+2. PrivateService valide le token  
+3. Formate le message  
+4. Publie dans Kafka `user.<destinataire>`  
+5. NotificationService transmet en temps réel
+
+---
+
+##  3. Channels
+
+### Rejoindre
+`POST /channel/join`
+
+### Envoyer un message
+`POST /channel/send`
+
+Message transmis :
 ```
----
-
-### Message Privé
-1. Le client envoie `/private/send` avec : token, destinataire, contenu.  
-2. RouterService → PrivateService.  
-3. PrivateService identifie l’expéditeur via le token et publie le message dans Kafka : `user.<destinataire>`.  
-4. Format :  
-```
-[Msg de <expéditeur>] <contenu>
+[Channel sport] [From alice] match ce soir ?
 ```
 
----
-
-###  Message de Channel
-1. Le client envoie `/channel/send` avec : token, channel, contenu.  
-2. RouterService → ChannelService.  
-3. ChannelService retrouve l’expéditeur et les membres du channel.  
-4. Chaque membre reçoit un message Kafka dans `user.<membre>` :  
-[Channel <nom>] [From <expéditeur>] <contenu>
+### Quitter
+`POST /channel/leave`
 
 ---
 
-###  Réception des messages (TCP + Kafka)
-1. Le client ouvre une connexion TCP :  
-```
-localhost:9090
-```  
-2. Il envoie son token.  
-3. NotificationService :  
-   - valide le token,  
-   - récupère le nickname,  
-   - s’abonne au topic Kafka `user.<nickname>`.  
-4. Chaque message reçu est envoyé instantanément via la connexion TCP.
+# 4. Réception Temps Réel (TCP)
+
+1. Connexion TCP sur : `localhost:9090`  
+2. Le client envoie son token  
+3. Le serveur retrouve le nickname  
+4. Kafka Consumer dédié  
+5. Messages envoyés instantanément
 
 ---
 
-##  Installation
+#  Installation
 
-1. Démarrer **Zookeeper** et **Kafka**  
-2. Cloner le projet  
-3. Configurer **Tomcat**  
-4. Déployer les microservices :  
-   - router-service  
-   - user-service  
-   - private-service  
-   - channel-service  
-   - notification-service
+1. Lancer Kafka et Zookeeper  
+2. Déployer les services sur Tomcat  
+3. Se connecter en TCP avec `nc` ou Putty  
 
----
 
 ## Endpoints (Postman)
-
 ### Ajout d’un utilisateur  
 POST  
 ```
@@ -113,7 +142,7 @@ http://localhost:8080/user-service/api/users/login
 ###  Envoi de message privé  
 POST  
 ```
-http://localhost:8080/router-service/api/router/private/send
+http://localhost:8080/router-service/api/router/send
 ```
 
 ```
