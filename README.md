@@ -85,49 +85,111 @@ Ces scénarios décrivent le cycle de vie de la donnée à travers le système.
     bin/kafka-server-start.sh config/server.properties
     ```
 
-### Scénario de Test "Happy Path"
+## 5. Guide de Test Complet (Scénario avec Postman & Netcat)
 
-**1. Création des utilisateurs (Alice et Bob)**
-```bash
-# Alice
-curl -X POST http://localhost:8080/user-service/api/users/register -d '{"nickname":"alice","password":"pwd"}' -H "Content-Type: application/json"
-# Bob
-curl -X POST http://localhost:8080/user-service/api/users/register -d '{"nickname":"bob","password":"pwd"}' -H "Content-Type: application/json"
-````
+Ce scénario valide le cycle complet : Inscription -> Login -> Connexion TCP -> Messagerie (Privée, Broadcast, Channels).
 
-**2. Login (Récupération des Tokens)**
+**Outils nécessaires :** Postman (pour les requêtes HTTP) et un Terminal (pour `nc` / Netcat).
 
-```bash
-# Login Alice (Copiez le token retourné -> TOKEN_ALICE)
-curl -X POST http://localhost:8080/user-service/api/users/login -d '{"nickname":"alice","password":"pwd"}' -H "Content-Type: application/json"
+### Étape 1 : Création des utilisateurs (Register)
+Création des comptes pour **Alice** et **Bob** via le Router.
 
-# Login Bob (Copiez le token retourné -> TOKEN_BOB)
-curl -X POST http://localhost:8080/user-service/api/users/login -d '{"nickname":"bob","password":"pwd"}' -H "Content-Type: application/json"
-```
+* **URL :** `POST http://localhost:8080/router-service/api/router/users/register`
+* **Body (Alice) :**
+    ```json
+    {"nickname":"alice","password":"pwd"}
+    ```
+* **Body (Bob) :**
+    ```json
+    {"nickname":"bob","password":"pwd"}
+    ```
+> **Vérification :** Code 200 OK.
 
-**3. Connexion Réception (Terminal Bob)**
+### Étape 2 : Login et Récupération des Tokens
+Connexion pour obtenir les UUIDs et déclencher la synchronisation inter-services.
 
-```bash
-nc localhost 9090
-# Le serveur demande le token. Collez TOKEN_BOB.
-# Le serveur répond "Authentifié comme bob".
-```
+* **URL :** `POST http://localhost:8080/router-service/api/router/users/login`
+* **Body (Alice) :**
+    ```json
+    {"nickname":"alice","password":"pwd"}
+    ```
+    * **Action :** Copiez le token reçu (ex: `b041d940-11b9...`) -> `TOKEN_ALICE`
+* **Body (Bob) :**
+    ```json
+    {"nickname":"bob","password":"pwd"}
+    ```
+    * **Action :** Copiez le token reçu (ex: `420d0605-6b44...`) -> `TOKEN_BOB`
 
-**4. Envoi de Message (Terminal Alice ou via Curl)**
+> **Vérification Logs :** Assurez-vous dans la console serveur que `UserService` a bien appelé `/api/notification/tokens`, `/api/private/sync/token` et `/api/channel/sync/token`.
 
-```bash
-curl -X POST http://localhost:8080/router-service/api/router/send \
--H "Content-Type: application/json" \
--d '{
-  "token": "TOKEN_ALICE",
-  "to": "bob",
-  "content": "Salut Bob, tu reçois ?"
-}'
-```
+### Étape 3 : Connexion TCP (NotificationService)
+Ouvrez deux terminaux différents pour simuler les écrans des clients.
 
-> **Résultat :** Le message apparaît instantanément dans le terminal `nc` de Bob.
+* **Terminal 1 (Alice) :**
+    ```bash
+    nc localhost 9090
+    # Collez TOKEN_ALICE
+    ```
+    > **Attendu :** `Authentifié comme alice`
 
------
+* **Terminal 2 (Bob) :**
+    ```bash
+    nc localhost 9090
+    # Collez TOKEN_BOB
+    ```
+    > **Attendu :** `Authentifié comme bob`
+
+### Étape 4 : Test Message Privé
+Alice envoie un message privé à Bob.
+
+* **URL :** `POST http://localhost:8080/router-service/api/router/send`
+* **Body :**
+    ```json
+    {
+      "token": "TOKEN_ALICE",
+      "to": "bob",
+      "content": "salut bob"
+    }
+    ```
+> **Attendu :**
+> * Postman : 200 OK `{"status":"Private message forwarded"}`
+> * Terminal Bob : `[Msg de alice] salut bob`
+
+### Étape 5 : Test Message Public (Broadcast)
+Envoi d'un message à tous les connectés.
+
+* **URL :** `POST http://localhost:8080/router-service/api/router/chat/send`
+* **Body :**
+    ```json
+    {
+      "to": "all",
+      "message": "hello tout le monde"
+    }
+    ```
+> **Attendu :** Les terminaux d'Alice et de Bob reçoivent le message simultanément.
+
+### Étape 6 : Test Channels (Join, Send, Leave)
+
+**1. Rejoindre le channel "sport"**
+* **URL :** `POST http://localhost:8080/router-service/api/router/channel/join`
+* **Alice :** `{"token":"TOKEN_ALICE","channel":"sport"}`
+* **Bob :** `{"token":"TOKEN_BOB","channel":"sport"}`
+
+**2. Alice envoie un message dans "sport"**
+* **URL :** `POST http://localhost:8080/router-service/api/router/channel/send`
+* **Body :**
+    ```json
+    {"token":"TOKEN_ALICE","channel":"sport","content":"match ce soir ?"}
+    ```
+> **Attendu (Terminal Bob) :** `[Channel sport][From alice] match ce soir ?`
+
+**3. Bob quitte le channel**
+* **URL :** `POST http://localhost:8080/router-service/api/router/channel/leave`
+* **Body :** `{"token":"TOKEN_BOB","channel":"sport"}`
+
+**4. Vérification finale**
+* Alice renvoie un message dans "sport".
+> **Attendu :** Bob ne reçoit plus rien.
 
 ## 6\. Difficultés et Pistes d'Amélioration
 
