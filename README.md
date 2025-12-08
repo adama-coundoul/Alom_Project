@@ -4,7 +4,8 @@
 
 Ce projet met en œuvre un serveur de chat modulaire reposant sur une architecture **microservices**. Il combine des communications synchrones (REST) pour la gestion et asynchrones (Kafka) pour la diffusion des messages, avec une restitution en temps réel via Sockets TCP.
 
-![Architecture Diagram](Diagramme_sans_nom.drawio.png)
+![Architecture Diagram]<img width="1011" height="946" alt="0_schema_finale_ALOM drawio" src="https://github.com/user-attachments/assets/a77a0f70-f77a-4fa2-b400-858dca109d21" />
+
 *(Architecture globale du système)*
 
 ---
