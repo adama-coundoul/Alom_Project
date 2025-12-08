@@ -39,6 +39,7 @@ Le projet est composé de 5 microservices :
   - pousse les messages directement via la socket  
 
 ### **5. RouterService**
+- Service "aller"
 - Point d’entrée unique HTTP  
 - Redirige vers les bons microservices
 
